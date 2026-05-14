@@ -14,12 +14,15 @@
   #panel  { grid-column: 2; grid-row: 1 / span 2; background: #0a0a14; padding: 12px;
             overflow-y: auto; font-size: 12px; }
   canvas  { display: block; width: 100%; height: 100%; }
-  #info { position: absolute; top: 38px; left: 12px; font-size: 11px;
+  #info { position: absolute; top: 50px; left: 12px; font-size: 11px;
           color: #aab; pointer-events: none; line-height: 1.5; }
   #header { position: absolute; top: 8px; left: 12px; right: 12px;
             color: #cce; font-size: 13px; font-weight: 600; pointer-events: none;
-            letter-spacing: 0.5px; }
-  #header span { color: #889; font-weight: 400; font-size: 11px; margin-left: 8px; }
+            letter-spacing: 0.5px; line-height: 1.3; }
+  #header span { display: block; color: #889; font-weight: 400; font-size: 11px;
+                 letter-spacing: 0; margin-top: 1px; }
+  #header a { color: inherit; text-decoration: none; pointer-events: auto; border-bottom: 1px dotted #667; }
+  #header a:hover { color: #cce; border-bottom-color: #cce; }
   #legend { position: absolute; bottom: 10px; left: 12px; font-size: 11px;
             color: #aab; line-height: 1.7; pointer-events: none;
             background: rgba(8,8,16,0.55); padding: 6px 10px; border-radius: 4px; }
@@ -44,7 +47,7 @@
     #strip  { grid-column: 1; grid-row: 2; }
     #panel  { grid-column: 1; grid-row: 3; padding: 8px 12px; max-height: 260px; }
     #header { font-size: 11px; }
-    #info   { font-size: 10px; top: 30px; }
+    #info   { font-size: 10px; top: 44px; }
     #legend { font-size: 10px; line-height: 1.5; padding: 4px 8px; bottom: 6px; }
     h2     { margin: 10px 0 4px; }
     label  { margin: 6px 0 1px; }
@@ -62,7 +65,7 @@
 <body>
 <div id="app">
   <div id="scene">
-    <div id="header">Extreme Mass Ratio Inspirals <span>· analytic kludge orbits + waveforms · Daniel Oliver</span></div>
+    <div id="header">Extreme Mass Ratio Inspirals<span>analytic kludge orbits + waveforms · <a href="https://danieljoliver.com" target="_blank" rel="noopener">Daniel Oliver</a></span></div>
     <div id="info"></div>
     <div id="legend">
       <div><span class="sw" style="color:#ff7722">●</span>massive black hole</div>
@@ -134,7 +137,7 @@
       ODEs Eqs. 27–31; waveform Eqs. 7–10. Source-frame strain only — no LISA response.
       Drag to rotate, scroll to zoom.
       <br><br>
-      By Daniel Oliver. Made with assistance from Claude Code.
+      By <a href="https://danieljoliver.com" target="_blank" style="color:#88aacc;">Daniel Oliver</a>. Made with assistance from Claude Code.
     </div>
   </div>
 </div>
