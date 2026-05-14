@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>EMRI Orbits — Analytic Kludge (Barack & Cutler 2004)</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #000; color: #ddd;
+               font-family: -apple-system, system-ui, sans-serif; overflow: hidden; }
+  #app { display: grid; grid-template-columns: 1fr 280px;
+         grid-template-rows: 1fr 180px; height: 100vh; gap: 1px; background: #222; }
+  #scene  { grid-column: 1; grid-row: 1; background: #000; position: relative; }
+  #strip  { grid-column: 1; grid-row: 2; background: #06060c; position: relative; }
+  #panel  { grid-column: 2; grid-row: 1 / span 2; background: #0a0a14; padding: 12px;
+            overflow-y: auto; font-size: 12px; }
+  canvas  { display: block; width: 100%; height: 100%; }
+  #info { position: absolute; top: 38px; left: 12px; font-size: 11px;
+          color: #aab; pointer-events: none; line-height: 1.5; }
+  #header { position: absolute; top: 8px; left: 12px; right: 12px;
+            color: #cce; font-size: 13px; font-weight: 600; pointer-events: none;
+            letter-spacing: 0.5px; }
+  #header span { color: #889; font-weight: 400; font-size: 11px; margin-left: 8px; }
+  #legend { position: absolute; bottom: 10px; left: 12px; font-size: 11px;
+            color: #aab; line-height: 1.7; pointer-events: none;
+            background: rgba(8,8,16,0.55); padding: 6px 10px; border-radius: 4px; }
+  #legend .sw { display: inline-block; width: 12px; text-align: center; margin-right: 4px; }
+  #stripLabel { position: absolute; top: 6px; left: 10px; font-size: 11px; color: #889; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+       color: #88aacc; margin: 16px 0 6px; border-bottom: 1px solid #223; padding-bottom: 4px; }
+  h2:first-of-type { margin-top: 0; }
+  label { display: block; margin: 8px 0 2px; color: #aab; font-size: 11px; }
+  .row { display: flex; align-items: center; gap: 6px; }
+  input[type=range] { flex: 1; }
+  .val { font-family: ui-monospace, monospace; font-size: 11px; color: #cce; min-width: 60px; text-align: right; }
+  button { background: #1a1a28; color: #cce; border: 1px solid #334;
+           padding: 4px 8px; margin: 2px; cursor: pointer; font-size: 11px; border-radius: 3px; }
+  button:hover { background: #25253a; }
+  button.active { background: #2a4a6a; border-color: #4a7aaa; }
+  .preset-row { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 4px; }
+  /* Narrow viewports: stack scene / strip / panel vertically. */
+  @media (max-width: 720px) {
+    #app { grid-template-columns: 1fr; grid-template-rows: 1fr 120px 260px; }
+    #scene  { grid-column: 1; grid-row: 1; }
+    #strip  { grid-column: 1; grid-row: 2; }
+    #panel  { grid-column: 1; grid-row: 3; padding: 8px 12px; max-height: 260px; }
+    #header { font-size: 11px; }
+    #info   { font-size: 10px; top: 30px; }
+    #legend { font-size: 10px; line-height: 1.5; padding: 4px 8px; bottom: 6px; }
+    h2     { margin: 10px 0 4px; }
+    label  { margin: 6px 0 1px; }
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+</head>
+<body>
+<div id="app">
+  <div id="scene">
+    <div id="header">Extreme Mass Ratio Inspirals <span>· analytic kludge orbits + waveforms · Daniel Oliver</span></div>
+    <div id="info"></div>
+    <div id="legend">
+      <div><span class="sw" style="color:#ff7722">●</span>massive black hole</div>
+      <div><span class="sw" style="color:#bb88ee">●</span>compact object</div>
+      <div><span class="sw" style="color:#ff5555">→</span>spin axis Ŝ</div>
+      <div><span class="sw" style="color:#55ff99">→</span>orbital ang. mom. L̂</div>
+      <div><span class="sw" style="color:#ff4444">○</span>ISCO (equatorial)</div>
+    </div>
+  </div>
+  <div id="strip">
+    <div id="stripLabel">strain h+ (violet), h× (orange) — source frame, observer along +x</div>
+    <canvas id="waveform"></canvas>
+  </div>
+  <div id="panel">
+    <h2>Presets</h2>
+    <div class="preset-row">
+      <button data-preset="generic">Generic Kerr</button>
+      <button data-preset="schwarz">Spherical Kerr</button>
+      <button data-preset="eccentric">High-e generic</button>
+      <button data-preset="plunge">Near plunge</button>
+    </div>
+
+    <h2>System</h2>
+    <label>MBH mass <span class="val" id="vM">1e6 M☉</span></label>
+    <input type="range" id="sM" min="4" max="8" step="0.1" value="6">
+    <label>CO mass <span class="val" id="vmu">10 M☉</span></label>
+    <input type="range" id="smu" min="0" max="2" step="0.05" value="1">
+
+    <h2>Initial orbit</h2>
+    <label>Spin a/M <span class="val" id="va">0.90</span></label>
+    <input type="range" id="sa" min="0" max="0.99" step="0.01" value="0.9">
+    <label>Semi-latus rectum p₀/M <span class="val" id="vp">5.0</span></label>
+    <input type="range" id="sp" min="3" max="30" step="0.1" value="5">
+    <label>Eccentricity e₀ <span class="val" id="ve">0.30</span></label>
+    <input type="range" id="se" min="0" max="0.9" step="0.01" value="0.3">
+    <label>Inclination ι <span class="val" id="vi">45°</span></label>
+    <input type="range" id="si" min="0" max="90" step="1" value="45">
+
+    <h2>Animation</h2>
+    <label>Time speedup <span class="val" id="vS">×100</span></label>
+    <input type="range" id="sS" min="1" max="5" step="0.05" value="2">
+    <div style="margin-top:8px;">
+      <button id="bPlay" class="active">Pause</button>
+      <button id="bReset">Reset</button>
+    </div>
+    <div style="margin-top:6px;">
+      <label><input type="checkbox" id="cFreeze"> freeze inspiral
+        <span style="color:#778; font-size:10px;">(hold p, e, ι and precession; orbit still cycles)</span>
+      </label>
+    </div>
+
+    <h2>View</h2>
+    <div class="preset-row">
+      <button data-view="orbit">Side</button>
+      <button data-view="top">Top (along Ŝ)</button>
+      <button data-view="sky">Plane of sky</button>
+    </div>
+    <div style="margin-top:8px;">
+      <label><input type="checkbox" id="cTrail" checked> trail</label>
+      <label><input type="checkbox" id="cLarrow" checked> show L̂ arrow</label>
+      <label><input type="checkbox" id="cSarrow"> show Ŝ arrow</label>
+      <label><input type="checkbox" id="cIsco"> show ISCO ring</label>
+    </div>
+
+    <h2>About</h2>
+    <div style="font-size:10px; color:#778; line-height:1.5;">
+      Implements the analytic kludge of Barack &amp; Cutler 2004
+      (<a href="https://arxiv.org/pdf/gr-qc/0310125" target="_blank" style="color:#88aacc;">arXiv:gr-qc/0310125</a>).
+      ODEs Eqs. 27–31; waveform Eqs. 7–10. Source-frame strain only — no LISA response.
+      Drag to rotate, scroll to zoom.
+      <br><br>
+      By Daniel Oliver. Made with assistance from Claude Code.
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+// =================== CONSTANTS ===================
+const T_SUN = 4.92549094e-6;  // G·M☉/c³ in seconds — geometric mass unit
+
+// =================== AK ORBITAL EVOLUTION (Eqs. 27–31) ===================
+// State: { Phi, nu, e, gamtil, alpha }
+// Params: { Msec, musec, aoverM (=S/M²), cosLambda }
+
+function derivs(s, p) {
+  const { nu, e } = s;
+  const M = p.Msec, mu = p.musec, q = p.aoverM, cosL = p.cosLambda;
+  const x   = 2*Math.PI*nu*M;          // dimensionless
+  const x23 = Math.cbrt(x*x);
+  const x83 = Math.pow(x, 8/3);
+  const x113= Math.pow(x, 11/3);
+  const e2  = e*e, e4 = e2*e2, e6 = e4*e2;
+  const om  = 1 - e2;                  // (1-e²)
+  const sqrtOm = Math.sqrt(Math.max(om, 1e-12));
+  const muM3 = mu/(M*M*M), muM2 = mu/(M*M);
+
+  // Eq. 27 — orbital phase (mean anomaly from pericenter)
+  const dPhi = 2*Math.PI*nu;
+
+  // Eq. 28 — dν/dt
+  const t1 = (1 + (73/24)*e2 + (37/96)*e4) * om;
+  const t2 = x23 * ((1273/336) - (2561/224)*e2 - (3885/128)*e4 - (13147/5376)*e6);
+  const t3 = -x * q * cosL / sqrtOm * ((73/12) + (1211/24)*e2 + (3143/96)*e4 + (65/64)*e6);
+  const dnu = (96/(10*Math.PI)) * muM3 * x113 * Math.pow(om, -9/2) * (t1 + t2 + t3);
+
+  // Eq. 29 — pericenter precession dγ̃/dt
+  const dgam = 6*Math.PI*nu * x23/om * (1 + 0.25*x23/om*(26 - 15*e2))
+             - 12*Math.PI*nu * cosL * q * x * Math.pow(om, -1.5);
+
+  // Eq. 30 — de/dt
+  const inner = (304 + 121*e2)*om*(1 + 12*x23)
+              - (1/56)*x23*(8*16705 + 12*9082*e2 - 25211*e4);
+  const deRR   = -(e/15) * muM2 * Math.pow(om, -7/2) * x83 * inner;
+  const deSpin =  e * muM2 * q * cosL * x113 * Math.pow(om, -4)
+                  * ((1364/5) + (5032/15)*e2 + (263/10)*e4);
+  const de = deRR + deSpin;
+
+  // Eq. 31 — Lense-Thirring nodal precession dα/dt
+  const dalpha = 4*Math.PI*nu * q * x * Math.pow(om, -1.5);
+
+  return { Phi: dPhi, nu: dnu, e: de, gamtil: dgam, alpha: dalpha };
+}
+
+function addScaled(s, k, h) {
+  return { Phi: s.Phi + h*k.Phi, nu: s.nu + h*k.nu, e: s.e + h*k.e,
+           gamtil: s.gamtil + h*k.gamtil, alpha: s.alpha + h*k.alpha };
+}
+
+function rk4Step(s, p, dt) {
+  const k1 = derivs(s, p);
+  const k2 = derivs(addScaled(s, k1, dt/2), p);
+  const k3 = derivs(addScaled(s, k2, dt/2), p);
+  const k4 = derivs(addScaled(s, k3, dt), p);
+  return {
+    Phi:    s.Phi    + dt*(k1.Phi    + 2*k2.Phi    + 2*k3.Phi    + k4.Phi)/6,
+    nu:     s.nu     + dt*(k1.nu     + 2*k2.nu     + 2*k3.nu     + k4.nu)/6,
+    e:      Math.max(0, s.e + dt*(k1.e + 2*k2.e + 2*k3.e + k4.e)/6),
+    gamtil: s.gamtil + dt*(k1.gamtil + 2*k2.gamtil + 2*k3.gamtil + k4.gamtil)/6,
+    alpha:  s.alpha  + dt*(k1.alpha  + 2*k2.alpha  + 2*k3.alpha  + k4.alpha)/6,
+  };
+}
+
+// =================== POSITION (Kepler + plane geometry) ===================
+
+function solveKepler(Manom, e) {
+  let E = Manom;
+  for (let i = 0; i < 10; i++) {
+    const f = E - e*Math.sin(E) - Manom;
+    const fp = 1 - e*Math.cos(E);
+    E -= f/fp;
+    if (Math.abs(f) < 1e-12) break;
+  }
+  return E;
+}
+
+function cross(a, b) {
+  return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+}
+
+function unitL(alpha, cosL) {
+  const sinL = Math.sqrt(Math.max(0, 1 - cosL*cosL));
+  return [sinL*Math.cos(alpha), sinL*Math.sin(alpha), cosL];
+}
+
+// Build orbital-plane basis (L̂, p̂ = pericenter direction, q̂ = 90° in plane).
+function orbitFrame(s, p) {
+  const L = unitL(s.alpha, p.cosLambda);
+  const sinL = Math.sqrt(L[0]*L[0] + L[1]*L[1]);
+  const eref = (sinL < 1e-7) ? [1, 0, 0] : [L[1]/sinL, -L[0]/sinL, 0];
+  const eperp = cross(L, eref);
+  const cg = Math.cos(s.gamtil), sg = Math.sin(s.gamtil);
+  const phat = [cg*eref[0] + sg*eperp[0], cg*eref[1] + sg*eperp[1], cg*eref[2] + sg*eperp[2]];
+  const qhat = cross(L, phat);
+  return { L, phat, qhat };
+}
+
+// Returns position r⃗ (in geometric seconds), L̂, p̂ (peri direction), and a (semimajor).
+function position(s, p) {
+  const { Phi, nu, e } = s;
+  const a = Math.cbrt(p.Msec / (4*Math.PI*Math.PI*nu*nu));
+  const E = solveKepler(Phi, e);
+  const xo = a*(Math.cos(E) - e);
+  const yo = a*Math.sqrt(Math.max(0,1-e*e))*Math.sin(E);
+  const { L, phat, qhat } = orbitFrame(s, p);
+  const r = [xo*phat[0] + yo*qhat[0],
+             xo*phat[1] + yo*qhat[1],
+             xo*phat[2] + yo*qhat[2]];
+  return { r, L, phat, a };
+}
+
+// =================== WAVEFORM (Peters–Mathews, Eqs. 7–10) ===================
+
+// J_0..J_maxIdx(x) via Miller's downward recurrence — numerically stable for n > x,
+// which is exactly the regime we need (x = n·e with e < 1).
+function besselJArray(maxIdx, x) {
+  const J = new Float64Array(maxIdx + 1);
+  if (x === 0) { J[0] = 1; return J; }
+  const M = maxIdx + Math.max(20, Math.ceil(Math.sqrt(40 * (maxIdx + 1))));
+  const W = new Float64Array(M + 2);
+  W[M] = 0;
+  W[M-1] = 1e-30;
+  for (let n = M - 1; n >= 1; n--) {
+    W[n-1] = (2*n / x) * W[n] - W[n+1];
+    if (Math.abs(W[n-1]) > 1e30) {
+      const s = 1e-30;
+      for (let i = n - 1; i <= M; i++) W[i] *= s;
+    }
+  }
+  let norm = W[0];
+  for (let k = 2; k <= M; k += 2) norm += 2 * W[k];
+  for (let i = 0; i <= maxIdx; i++) J[i] = W[i] / norm;
+  return J;
+}
+
+function getJ(Jarr, k) {
+  if (k < 0) return ((-k) % 2 === 0 ? 1 : -1) * Jarr[-k];
+  return Jarr[k];
+}
+
+// Source-frame h+, h× summed over harmonics (Eqs. 7–10 with γ ≈ γ̃; 1/D dropped).
+function strain(s, p, nhat) {
+  const { Phi, nu, e, gamtil, alpha } = s;
+  const A = Math.pow(2*Math.PI*nu*p.Msec, 2/3) * p.musec;
+
+  // Bucketed harmonic count: stays constant within an e-range so that as e drifts
+  // during inspiral, harmonics don't snap in/out and produce visible wiggle in h+.
+  let NMAX;
+  if      (e < 0.20) NMAX = 6;
+  else if (e < 0.40) NMAX = 12;
+  else if (e < 0.60) NMAX = 22;
+  else if (e < 0.75) NMAX = 36;
+  else if (e < 0.85) NMAX = 50;
+  else               NMAX = 60;
+
+  const L = unitL(alpha, p.cosLambda);
+  const Ldotn = L[0]*nhat[0] + L[1]*nhat[1] + L[2]*nhat[2];
+  const Ldotn2 = Ldotn*Ldotn;
+  const fp1 = -(1 + Ldotn2);
+  const fp2 =  (1 - Ldotn2);
+  const fc  =  2*Ldotn;
+
+  const c2g = Math.cos(2*gamtil), s2g = Math.sin(2*gamtil);
+  const sqrtOm = Math.sqrt(Math.max(0, 1 - e*e));
+
+  let hp = 0, hx = 0;
+  for (let n = 1; n <= NMAX; n++) {
+    const ne = n*e;
+    const Jarr = besselJArray(n + 2, ne);
+    const Jm2 = getJ(Jarr, n-2);
+    const Jm1 = getJ(Jarr, n-1);
+    const J0  = Jarr[n];
+    const Jp1 = Jarr[n+1];
+    const Jp2 = Jarr[n+2];
+    const cosNP = Math.cos(n*Phi), sinNP = Math.sin(n*Phi);
+    const an = -n*A * (Jm2 - 2*e*Jm1 + (2/n)*J0 + 2*e*Jp1 - Jp2) * cosNP;
+    const bn = -n*A * sqrtOm * (Jm2 - 2*J0 + Jp2) * sinNP;
+    const cn =  2*A * J0 * cosNP;
+    hp += fp1 * (an*c2g - bn*s2g) + fp2 * cn;
+    hx += fc  * (bn*c2g + an*s2g);
+  }
+  return { hp, hx };
+}
+
+// =================== THREE.JS SCENE ===================
+
+const sceneEl = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+sceneEl.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x000000);
+
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 2000);
+camera.position.set(10, 6, 10);
+camera.up.set(0, 0, 1);
+const orbitCtrl = new OrbitControls(camera, renderer.domElement);
+orbitCtrl.target.set(0, 0, 0);
+
+// Black hole event horizon (Kerr outer horizon r+ = M(1+√(1-a²))).
+const bhMesh = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 48, 48),
+  new THREE.MeshBasicMaterial({ color: 0xff7722 }));
+scene.add(bhMesh);
+
+// Spin axis arrow Ŝ
+const spinArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), 3,
+  0xff5555, 0.3, 0.18);
+scene.add(spinArrow);
+
+// Orbital angular momentum L̂
+const lArrow = new THREE.ArrowHelper(
+  new THREE.Vector3(0,0,1), new THREE.Vector3(0,0,0), 2.5,
+  0x55ff99, 0.25, 0.14);
+scene.add(lArrow);
+
+// Compact object
+const co = new THREE.Mesh(
+  new THREE.SphereGeometry(0.07, 16, 16),
+  new THREE.MeshBasicMaterial({ color: 0xbb88ee }));
+scene.add(co);
+
+// Trail (sliding window of recent positions).
+const TRAIL_LEN = 800;
+const trailPos = new Float32Array(TRAIL_LEN * 3);
+const trailGeom = new THREE.BufferGeometry();
+trailGeom.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
+const trail = new THREE.Line(trailGeom,
+  new THREE.LineBasicMaterial({ color: 0xaa66dd, transparent: true, opacity: 0.7 }));
+scene.add(trail);
+
+// ISCO ring — Kerr equatorial-prograde innermost stable circular orbit, in the
+// equatorial plane (perpendicular to Ŝ = ẑ). Closed-form Bardeen-Press-Teukolsky.
+// For inclined / eccentric orbits the true LSO differs slightly; this is shown
+// as a rough boundary indicator only.
+function rISCO_overM(a) {
+  const aa = Math.abs(a);
+  const Z1 = 1 + Math.cbrt(1 - aa*aa) * (Math.cbrt(1 + aa) + Math.cbrt(1 - aa));
+  const Z2 = Math.sqrt(3*aa*aa + Z1*Z1);
+  return 3 + Z2 - Math.sign(a || 1) * Math.sqrt(Math.max(0, (3 - Z1)*(3 + Z1 + 2*Z2)));
+}
+const iscoRing = new THREE.Mesh(
+  new THREE.RingGeometry(0.99, 1.01, 96),
+  new THREE.MeshBasicMaterial({ color: 0xff4444, transparent: true,
+                                opacity: 0.55, side: THREE.DoubleSide }));
+iscoRing.visible = false;
+scene.add(iscoRing);
+
+
+function resize() {
+  const w = sceneEl.clientWidth, h = sceneEl.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// =================== WAVEFORM CANVAS ===================
+const wfCanvas = document.getElementById('waveform');
+const wfCtx = wfCanvas.getContext('2d');
+const WF_LEN = 1200;
+const wfP = new Float32Array(WF_LEN);
+const wfX = new Float32Array(WF_LEN);
+let wfHead = 0;
+
+function drawWaveform() {
+  const dpr = devicePixelRatio || 1;
+  const cssW = wfCanvas.clientWidth, cssH = wfCanvas.clientHeight;
+  if (wfCanvas.width !== cssW*dpr) { wfCanvas.width = cssW*dpr; wfCanvas.height = cssH*dpr; }
+  const w = wfCanvas.width, h = wfCanvas.height;
+  wfCtx.fillStyle = '#06060c';
+  wfCtx.fillRect(0, 0, w, h);
+
+  let m = 1e-30;
+  for (let i = 0; i < WF_LEN; i++) m = Math.max(m, Math.abs(wfP[i]), Math.abs(wfX[i]));
+  const sc = (h*0.42) / m;
+  const cy = h/2;
+
+  function plot(buf, color) {
+    wfCtx.strokeStyle = color;
+    wfCtx.lineWidth = 1.5*dpr;
+    wfCtx.beginPath();
+    for (let i = 0; i < WF_LEN; i++) {
+      const idx = (wfHead + i) % WF_LEN;
+      const x = (i / (WF_LEN-1)) * w;
+      const y = cy - buf[idx] * sc;
+      if (i === 0) wfCtx.moveTo(x, y); else wfCtx.lineTo(x, y);
+    }
+    wfCtx.stroke();
+  }
+  // Zero line
+  wfCtx.strokeStyle = '#222a38';
+  wfCtx.beginPath(); wfCtx.moveTo(0, cy); wfCtx.lineTo(w, cy); wfCtx.stroke();
+  plot(wfP, '#bb88ee');
+  plot(wfX, '#ffaa44');
+}
+
+// =================== STATE & PARAMS ===================
+const params = {
+  Mmsun: 1e6, mumsun: 10, aoverM: 0.9,
+  cosLambda: Math.cos(45*Math.PI/180),
+  pInit: 5.0,                    // user-set initial p/M (separate from evolving state)
+  speed: 1e2,
+  Msec: 0, musec: 0, visualScale: 1,
+  showTrail: true, showL: true, showS: false,
+  freezeInspiral: false,
+};
+let state = null, playing = true;
+
+function syncMass() { params.Msec = params.Mmsun*T_SUN; params.musec = params.mumsun*T_SUN; }
+
+// (p, e, M) → ν via Kepler third law: a = pM/(1-e²), ν = (1/2π)·sqrt(M/a³).
+function nuFromP(pOverM, e) {
+  const a = pOverM * params.Msec / Math.max(1 - e*e, 1e-6);
+  return Math.sqrt(params.Msec / (a*a*a)) / (2*Math.PI);
+}
+function pOverMFromState() {
+  const a = Math.cbrt(params.Msec / (4*Math.PI*Math.PI*state.nu*state.nu));
+  return a * (1 - state.e*state.e) / params.Msec;
+}
+
+function applyVisualScale() {
+  const a0 = Math.cbrt(params.Msec / (4*Math.PI*Math.PI*state.nu*state.nu));
+  params.visualScale = 4.0 / a0;
+  // Resize BH to outer Kerr horizon r+ = M(1 + √(1-a²)) in scene units.
+  const rPlus = params.Msec * (1 + Math.sqrt(Math.max(0, 1 - params.aoverM*params.aoverM)));
+  const Rs = rPlus * params.visualScale;
+  bhMesh.scale.setScalar(Math.max(Rs, 0.05));
+  // Resize ISCO ring (equatorial-prograde, scales with a/M).
+  const rIsco = rISCO_overM(params.aoverM) * params.Msec * params.visualScale;
+  iscoRing.scale.setScalar(rIsco);
+}
+
+function clearTrailAndStrip() {
+  for (let i = 0; i < TRAIL_LEN*3; i++) trailPos[i] = 0;
+  trailGeom.attributes.position.needsUpdate = true;
+  wfP.fill(0); wfX.fill(0); wfHead = 0;
+}
+
+function setPreset(name) {
+  let freeze = false, p0 = 5, e0 = 0.3, iotaDeg = 45, spin = 0.9;
+  if (name === 'generic')   { p0 = 5;  e0 = 0.30; iotaDeg = 45; spin = 0.90; }
+  else if (name === 'schwarz')   { p0 = 7;  e0 = 0.00; iotaDeg = 60; spin = 0.95; }
+  else if (name === 'eccentric') { p0 = 4;  e0 = 0.85; iotaDeg = 60; spin = 0.90;
+                                   freeze = true;  /* high e plunges fast — hold elements */ }
+  else if (name === 'plunge')    { p0 = 3;  e0 = 0.40; iotaDeg = 30; spin = 0.95; }
+
+  params.aoverM    = spin;
+  params.cosLambda = Math.cos(iotaDeg*Math.PI/180);
+  params.pInit     = p0;
+  state = { Phi: 0, nu: 0, e: e0, gamtil: 0, alpha: 0 };
+  syncMass();
+  state.nu = nuFromP(p0, e0);
+
+  params.freezeInspiral = freeze;
+  document.getElementById('cFreeze').checked = freeze;
+  applyVisualScale();
+  clearTrailAndStrip();
+  syncUIFromState();
+}
+
+function syncUIFromState() {
+  document.getElementById('sa').value = params.aoverM;
+  document.getElementById('si').value = Math.round(Math.acos(params.cosLambda)*180/Math.PI);
+  document.getElementById('se').value = state.e;
+  document.getElementById('sp').value = params.pInit;
+  refreshLabels();
+}
+
+// =================== ANIMATION LOOP ===================
+let lastT = performance.now();
+const observer = (() => {
+  const v = [1, 0, 0.2];
+  const L = Math.hypot(v[0], v[1], v[2]);
+  return [v[0]/L, v[1]/L, v[2]/L];
+})();
+
+function animate(now) {
+  requestAnimationFrame(animate);
+  const dtWall = Math.min(0.05, (now - lastT)/1000);
+  lastT = now;
+
+  if (playing) {
+    const dtPhys = dtWall * params.speed;
+    const PhiBefore = state.Phi;
+
+    if (params.freezeInspiral) {
+      // Slow params held; only orbital phase advances.
+      state.Phi += 2*Math.PI*state.nu*dtPhys;
+    } else {
+      // Substep on inspiral timescale — slow params need ODE accuracy.
+      const d0 = derivs(state, params);
+      const tauNu = state.nu / Math.max(Math.abs(d0.nu), 1e-30);
+      const dtMax = Math.max(1, tauNu * 0.005);
+      const nSub  = Math.max(1, Math.min(200, Math.ceil(dtPhys / dtMax)));
+      const dt    = dtPhys / nSub;
+
+      const backup = { ...state };
+      for (let i = 0; i < nSub; i++) state = rk4Step(state, params, dt);
+
+      // Approaching plunge or numerics breaking down → freeze instead of resetting.
+      if (!isFinite(state.nu) || state.nu*params.Msec > 0.08
+          || state.e < 0 || state.e > 0.92) {
+        state = backup;
+        params.freezeInspiral = true;
+        document.getElementById('cFreeze').checked = true;
+      }
+    }
+
+    // Cap orbital-phase advance per render frame so the rendered orbit stays
+    // smooth even at huge speedup. More frames at high e (fast pericenter).
+    const ratio = (1 + state.e) / Math.max(1 - state.e, 0.05);
+    const framesPerOrbit = Math.min(400, 40 + 60 * Math.sqrt(ratio));
+    const maxPhiAdv = 2*Math.PI / framesPerOrbit;
+    const phiAdv = state.Phi - PhiBefore;
+    if (phiAdv > maxPhiAdv) state.Phi = PhiBefore + maxPhiAdv;
+  }
+
+  // Position
+  const pos = position(state, params);
+  const sc = params.visualScale;
+  co.position.set(pos.r[0]*sc, pos.r[1]*sc, pos.r[2]*sc);
+
+  // Trail (sliding window — shift left, append at end).
+  if (params.showTrail) {
+    trailPos.copyWithin(0, 3);
+    trailPos[3*(TRAIL_LEN-1)]   = co.position.x;
+    trailPos[3*(TRAIL_LEN-1)+1] = co.position.y;
+    trailPos[3*(TRAIL_LEN-1)+2] = co.position.z;
+    trailGeom.attributes.position.needsUpdate = true;
+    trail.visible = true;
+  } else {
+    trail.visible = false;
+  }
+
+  // L̂ / Ŝ arrows
+  lArrow.visible = params.showL;
+  spinArrow.visible = params.showS;
+  lArrow.setDirection(new THREE.Vector3(pos.L[0], pos.L[1], pos.L[2]));
+
+  // Strain sample
+  const h = strain(state, params, observer);
+  wfP[wfHead] = h.hp;
+  wfX[wfHead] = h.hx;
+  wfHead = (wfHead+1) % WF_LEN;
+
+  // Live info readout — modern Kerr-EMRI parameters (p, e, cos ι) and the three
+  // fundamental frequencies (Schmidt 2002 / Drasco–Hughes 2004 convention):
+  //   Ω_r = 2πν,  Ω_θ = Ω_r + dγ̃/dt,  Ω_φ = Ω_θ + dα/dt
+  {
+    const d = derivs(state, params);
+    const aSemi  = Math.cbrt(params.Msec / (4*Math.PI*Math.PI*state.nu*state.nu));
+    const pOverM = aSemi * (1 - state.e*state.e) / params.Msec;
+    const cosI   = params.cosLambda;
+    const fr = state.nu;
+    const fth = state.nu + d.gamtil / (2*Math.PI);
+    const fph = fth      + d.alpha  / (2*Math.PI);
+    document.getElementById('info').innerHTML =
+      `p/M = ${pOverM.toFixed(3)} &nbsp; ` +
+      `e = ${state.e.toFixed(4)} &nbsp; ` +
+      `cos ι = ${cosI.toFixed(3)}<br>` +
+      `f_r = ${(fr*1000).toFixed(4)} mHz &nbsp; ` +
+      `f_θ = ${(fth*1000).toFixed(4)} mHz &nbsp; ` +
+      `f_φ = ${(fph*1000).toFixed(4)} mHz`;
+  }
+
+  orbitCtrl.update();
+  renderer.render(scene, camera);
+  drawWaveform();
+}
+
+// =================== UI WIRING ===================
+function fmt(x, n=2) { return Number(x).toFixed(n); }
+function refreshLabels() {
+  document.getElementById('vM').textContent  = params.Mmsun.toExponential(1) + ' M☉';
+  document.getElementById('vmu').textContent = fmt(params.mumsun, 1) + ' M☉';
+  document.getElementById('va').textContent  = fmt(params.aoverM, 2);
+  document.getElementById('vi').textContent  = Math.round(Math.acos(params.cosLambda)*180/Math.PI) + '°';
+  document.getElementById('vp').textContent  = fmt(params.pInit, 2);
+  document.getElementById('ve').textContent  = fmt(state.e, 2);
+  document.getElementById('vS').textContent  = '×' + Math.round(params.speed).toLocaleString();
+}
+
+function bindSlider(id, fn, log=false) {
+  const el = document.getElementById(id);
+  el.addEventListener('input', () => {
+    const v = log ? Math.pow(10, +el.value) : +el.value;
+    fn(v);
+    refreshLabels();
+  });
+}
+
+bindSlider('sM',  v => { params.Mmsun = v; syncMass();
+                         state.nu = nuFromP(params.pInit, state.e);
+                         applyVisualScale(); }, true);
+bindSlider('smu', v => { params.mumsun = v; syncMass(); }, true);
+bindSlider('sa',  v => { params.aoverM = v; applyVisualScale(); });
+bindSlider('si',  v => { params.cosLambda = Math.cos(v*Math.PI/180); });
+bindSlider('sp',  v => { params.pInit = v;
+                         state.nu = nuFromP(v, state.e);
+                         applyVisualScale(); clearTrailAndStrip(); });
+bindSlider('se',  v => { state.e = v;
+                         state.nu = nuFromP(params.pInit, v);
+                         applyVisualScale(); clearTrailAndStrip(); });
+bindSlider('sS',  v => { params.speed = v; }, true);
+
+document.querySelectorAll('button[data-preset]').forEach(b =>
+  b.addEventListener('click', () => setPreset(b.dataset.preset)));
+
+document.querySelectorAll('button[data-view]').forEach(b =>
+  b.addEventListener('click', () => {
+    const r = camera.position.length();
+    if (b.dataset.view === 'top')   camera.position.set(0, 0, r);
+    if (b.dataset.view === 'sky')   camera.position.set(r, 0, 0);
+    if (b.dataset.view === 'orbit') camera.position.set(r*0.7, r*0.45, r*0.7);
+    orbitCtrl.update();
+  }));
+
+document.getElementById('bPlay').addEventListener('click', e => {
+  playing = !playing;
+  e.target.textContent = playing ? 'Pause' : 'Play';
+  e.target.classList.toggle('active', playing);
+});
+document.getElementById('bReset').addEventListener('click', () => {
+  params.speed = 1e2;
+  document.getElementById('sS').value = 2;     // log10(1e2)
+  setPreset('generic');                         // also resets freeze, e, ν, spin, λ
+});
+document.getElementById('cTrail').addEventListener('change', e => params.showTrail = e.target.checked);
+document.getElementById('cLarrow').addEventListener('change', e => params.showL = e.target.checked);
+document.getElementById('cSarrow').addEventListener('change', e => params.showS = e.target.checked);
+document.getElementById('cIsco').addEventListener('change', e => iscoRing.visible = e.target.checked);
+document.getElementById('cFreeze').addEventListener('change', e => params.freezeInspiral = e.target.checked);
+
+// Init
+setPreset('generic');
+requestAnimationFrame(animate);
+</script>
+</body>
+</html>

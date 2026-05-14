@@ -1,0 +1,14 @@
+# macOS
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code session metadata
+.claude/
+
+# External / large reference material — not part of the shipped viz
+codes/
+papers/
